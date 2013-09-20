@@ -30,16 +30,22 @@
          (~pr-func  (str "For " (quote ~test) " we took ELSE way"))
          ~else))))
 
+(defn let-replace [pr-func args]
+
 (defmacro xray [pr-func body]
   (postwalk 
    (fn [form]
      (cond  (coll? form)
             (let [f (first form)
                   args (rest form)]
-              (cond (and (symbol? f) (= f 'if))
-                    (if-replace pr-func args)
-                    :else
-                    form))
+              (if (symbol? f)
+                (cond (= f 'if)
+                      (if-replace pr-func args)
+                      (= f 'let)
+                      (let-replace pr-func args)
+                      :else
+                      form)
+                form))
             :else     
             form))
    body))
