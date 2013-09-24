@@ -35,9 +35,10 @@
     `(cond 
       ~@(reduce concat
                 (map (fn [[cond-test cond-form]]
-                       `(~cond-test (do
-                                      (~pr-func (str "COND " (quote ~cond-test) " is TRUE"))
-                                      ~cond-form)))
+                       (let [debugged-test (question-symbol-mark-replace cond-test pr-func)]
+                         `(~debugged-test (do
+                                        (~pr-func (str "COND " (quote ~cond-test) " is TRUE"))
+                                      ~cond-form))))
                      cond-pairs)))))
 
 

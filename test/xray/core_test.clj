@@ -24,6 +24,8 @@
 (xray println
       (defn cond-test [a b c]
         (cond (= a 4) 6
-              (= a 3) 8
+              (= ?a 3) 8
               :else 9)))
+
+(cond-test 3 4 5)
 

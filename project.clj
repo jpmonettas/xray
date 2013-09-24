@@ -1,4 +1,4 @@
-(defproject xray "0.1.0-SNAPSHOT"
+(defproject org.clojars.jpmonettas/xray "0.1.0-SNAPSHOT"
   :description "Debugging macros for clojure. Automatically add log statements to a form"
   :url ""
   :license {:name "Eclipse Public License"
