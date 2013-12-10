@@ -1,133 +1,212 @@
 (ns xray.core
-  (:use clojure.walk))
+  (:use clojure.tools.trace))
 
 
-(defn- symbol-is-marked? [sym]
-  (= (get (name sym) 0) \?))
+;; New version
+(defmulti parse-item (fn [form]
+                       (cond
+                        (seq? form) :seq
+                        (map? form) :map
+                        (vector? form) :vector
+                        (set? form) :set)))
 
-(defn- remove-mark-from-symbol [sym]
-  (symbol (subs (name sym) 1)))
+(defmethod parse-item :seq
+  [form]
+  (parse-sexp form))
 
-(defn- remove-all-symbol-marks [vect-tree]
-  (postwalk 
-   (fn [form]
-     (if (and (symbol? form) (symbol-is-marked? form))
-       (remove-mark-from-symbol form)
-       form))
-   vect-tree))
+(defmethod parse-item :map
+  [form]
+  (into (if (sorted? form) (sorted-map) {})
+                     (map #(parse-item %1) form)))
 
-(defn- question-symbol-mark-replace [body pr-func]
-  (postwalk
-   (fn [form]
-     (if (and (symbol? form) (symbol-is-marked? form))
-       (let [sym# (remove-mark-from-symbol form)]
-         `(do
-            (~pr-func (str (quote ~sym#)
-                           "=>"
-                           (with-out-str (clojure.pprint/pprint ~sym#))))
-            ~sym#))
-       form))
-   body))
+(defmethod parse-item :vector
+  [form]
+  (vec (map #(parse-item %1) form)))
 
-(defn- if-replace [pr-func args]
-  (let [[test then else] args
-        debugged-test (question-symbol-mark-replace test pr-func)]
-    `(do
-       (~pr-func (str "IF " (quote ~test)))
-       (if ~debugged-test
-         (do
-           (~pr-func  (str (quote ~test) " is TRUE"))
-           ~then)
-       (do
-         (~pr-func  (str (quote ~test) " is FALSE"))
-         ~else)))))
+(defmethod parse-item :set
+  [form]
+  (into (if (sorted? form) (sorted-set) #{})
+                     (map #(parse-item %1) form)))
 
-(defn- cond-replace [pr-func args]
-  (let [cond-pairs (partition 2 args)]
-    `(do
-       (~pr-func "COND")
-       (cond 
-        ~@(reduce concat
-                  (map (fn [[cond-test cond-form]]
-                         (let [debugged-test (question-symbol-mark-replace cond-test pr-func)]
-                           `(~debugged-test (do
-                                              (~pr-func (str (quote ~cond-test) " is TRUE"))
-                                              ~cond-form))))
-                  cond-pairs))))))
+(defmethod parse-item :default
+  [form]
+  form)
 
 
-(defn- let-replace [pr-func args]
-  (let [[bindings & body-forms] args]
-    `(let 
-         ~(let [bind-pairs (partition 2 bindings)]
-          (into []
-                (reduce 
-                 concat
-                 (map 
-                  (fn [[bind-name bind-form]]
-                    (if (symbol-is-marked? bind-name) 
-                      (let [bind-name-symbol (remove-mark-from-symbol bind-name)]
-                        [bind-name-symbol `(let [res# ~bind-form]
-                                             (~pr-func (str "LET " (quote ~bind-name-symbol)
-                                                            "=>"
-                                                            (with-out-str (clojure.pprint/pprint res#))))
-                                             res#)])
-                      [bind-name bind-form]))
-                  bind-pairs))))
-     ~@body-forms)))
+(defmulti parse-sexp (fn [[sym & rest]]
+                       sym))
 
 
-(defn- flat-vector-tree [v-tree]
-  (into []
-        (if (vector? v-tree)
-          (reduce concat (map #(flat-vector-tree %) v-tree))
-          (vector v-tree))))
+(defmethod parse-sexp 'if
+  [[_ test then else]]
+  `(if ~(parse-item test)
+     (do
+       (print "Then")
+       ~(parse-item then))
+     (do
+       (print "Else")
+       ~(parse-item else))))
 
-(defn- defn-replace [pr-funct [fn-name params & body-forms]]
-  (let [clean-params (remove-all-symbol-marks params)]
-    `(defn ~fn-name ~clean-params
-       (~pr-funct (str "-> FUNC " (quote ~fn-name)))
-       ~@(map (fn [p-symbol]
-                `(~pr-funct (str (quote ~fn-name) 
-                                 " param "
-                                 (quote ~p-symbol)
-                                 "=>"
-                                 (with-out-str (clojure.pprint/pprint ~p-symbol)))))
-              (remove-all-symbol-marks
-               (filter 
-                symbol-is-marked? 
-                (flat-vector-tree params))))
-       (let [start-time# (. java.lang.System (clojure.core/nanoTime))
-             ret# ~@body-forms
-             retpp# (with-out-str (clojure.pprint/pprint ret#))
-             end-time# (. java.lang.System (clojure.core/nanoTime))
-             delta# (/ (double (- end-time# start-time#)) 1000000.0)]
-         (~pr-funct (str "<- " 
-                         (quote ~fn-name)
-                         " ret=>" retpp# " in " delta# " msecs"))
-         ret#))))
-  
-(defmacro xray
-  [pr-func body]
-  (postwalk 
-   (fn [form]
-     (cond  (coll? form)
-            (let [f (first form)
-                  args (rest form)]
-              (if (symbol? f)
-                (cond (= f 'if)
-                      (if-replace pr-func args)
-                      (= f 'cond)
-                      (cond-replace pr-func args)
-                      (= f 'let)
-                      (let-replace pr-func args)
-                      (= f 'defn)
-                      (defn-replace pr-func args)
-                      :else
-                      form)
-                form))
-            :else     
-            form))
-   body))
+(defmethod parse-sexp 'quote
+  [form]
+  form)
 
 
+(defmethod parse-sexp :default
+  [form]
+  (let [debugged-form (map #(parse-item %) form)
+        [f & params] debugged-form]
+    `(let [result# ~debugged-form]
+       (print (str "Called : " (quote ~f) " with input : " ~@params " which returned " result#))
+       result#)))
+
+(defmacro xray [form]
+  (parse-item (macroexpand form)))
+
+
+;; Old version
+
+;; (defn- contains-symb? [elem vect]
+;;   (some #{elem} vect))
+
+;; (defn get-form-symbols [form]
+;;   (into #{}
+;;         (cond (symbol? form) (vector form)
+;;               (coll? form) (reduce concat (map get-form-symbols form)))))
+
+
+;; (defn- debug-symbol? [symb symbols-vec]
+;;       (contains-symb? symb symbols-vec))
+
+;; (defn gen-symbol-prints [prefix symbols]
+;;   `(do
+;;      ~@(map (fn [p-symbol]
+;;              `(println (str ~prefix
+;;                             " ( "
+;;                             (quote ~p-symbol)
+;;                             " ) =>"
+;;                             (with-out-str (clojure.pprint/pprint ~p-symbol)))))
+;;            symbols)))
+
+;; (defn xray-let [[bindings & body-forms] symbols]
+;;   `(let
+;;        ~(let [bind-pairs (partition 2 bindings)]
+;;           (into []
+;;                 (reduce
+;;                  concat
+;;                 (map
+;;                   (fn [[bind-name bind-form]]
+;;                     (if (debug-symbol? bind-name symbols)
+;;                       [bind-name `(let [res# ~(xray bind-form symbols)]
+;;                                            (print (str "LET ( " (quote ~bind-name)
+;;                                                        " ) =>"
+;;                                                        (with-out-str (clojure.pprint/pprint res#))))
+;;                                            res#)]
+;;                         [bind-name (xray bind-form symbols)]))
+;;                   bind-pairs))))
+;;      ~@(xray body-forms symbols)))
+
+
+;; (defn xray-defn [[fn-name params & body-forms] symbols]
+;;   `(defn ~fn-name ~params
+;;      (println (str "-----------------> [ " (quote ~fn-name) " ]"))
+;;      ~(gen-symbol-prints
+;;        (name fn-name)
+;;        (filter #(debug-symbol? %1 symbols) (get-form-symbols params)))
+;;        (let [start-time# (. java.lang.System (clojure.core/nanoTime))
+;;              ret# (do ~@body-forms)
+;;              retpp# (with-out-str (clojure.pprint/pprint ret#))
+;;              end-time# (. java.lang.System (clojure.core/nanoTime))
+;;              delta# (/ (double (- end-time# start-time#)) 1000000.0)]
+;;             (println (str "<----------------- [ " (quote ~fn-name) " ] =>" retpp#))
+;;             (println (str "TIME " (quote ~fn-name) " in " delta# " msecs"))
+;;          ret#)))
+
+;; (defn xray-if [[test then else] symbols]
+;;   (let [test-debug-symbols (clojure.set/intersection (set (get-form-symbols test))
+;;                                                      (set symbols))]
+;;     `(do
+;;        (println (str "IF " (quote ~test)))
+;;        ~(when (not (empty? test-debug-symbols))
+;;           (gen-symbol-prints "With IF TEST PARAM " test-debug-symbols))
+;;        (if ~test
+;;          (do
+;;            (println  (str (quote ~test) " is TRUE"))
+;;            ~then)
+;;        (do
+;;          (println  (str (quote ~test) " is FALSE"))
+;;          ~else)))))
+
+;; (defn xray-cond [args symbols]
+;;   (let [cond-pairs (partition 2 args)
+;;         test-debug-symbols (clojure.set/intersection (set (get-form-symbols test))
+;;                                                      (set symbols))]
+;;     `(do
+;;        (cond
+;;         ~@(reduce concat
+;;                   (map (fn [[cond-test cond-form]]
+;;                          `(~cond-test ~(let [test-debug-symbols (clojure.set/intersection (set (get-form-symbols test))
+;;                                                                                           (set symbols))]
+;;                                          `(do
+;;                                             ~(when (not (empty? test-debug-symbols))
+;;                                                (gen-symbol-prints "With IF TEST PARAM " test-debug-symbols))
+;;                                             (print (str "COND " (quote ~cond-test) " is TRUE"))
+;;                                             ~cond-form))))
+;;                        cond-pairs))))))
+
+;; (defn xray [form symbols]
+;;   (cond
+;;    (list? form) (let [f (first form)]
+;;                   (cond (and (symbol? f) (= f 'let))
+;;                         (xray-let (rest form) symbols)
+;;                         (and (symbol? f) (= f 'defn))
+;;                         (xray-defn (rest form) symbols)
+;;                         (and (symbol? f) (= f 'if))
+;;                         (xray-if (rest form) symbols)
+;;                         (and (symbol? f) (= f 'cond))
+;;                         (xray-cond (rest form) symbols)
+;;                         :else
+;;                         (map #(xray %1 symbols) form)))
+;;    (seq? form) (doall (map #(xray %1 symbols) form))
+;;    (vector? form) (vec (map #(xray %1 symbols) form))
+;;    (map? form) (into (if (sorted? form) (sorted-map) {})
+;;                      (map #(xray %1 symbols) form))
+;;    (set? form) (into (if (sorted? form) (sorted-set) #{})
+;;                      (map #(xray %1 symbols) form))
+;;    :else form))
+
+;; (defmacro xr [symbols form]
+;;   (xray form symbols))
+
+;; ;; ------------------------------ TESTS ---------------------
+
+;; (xr [b h j]
+;; (let [a 5
+;;       b (let [w 5
+;;               h (+ w w)]
+;;           h)
+;;       c (+ a b)]
+;;   (let [j 9] j))
+;; )
+
+;; (xr [c]
+;; (defn defn-test [a [b c] & r]
+;;   (+ a b) r)
+;; )
+
+;; (defn-test 1 [5 6] '(10))
+
+
+;; (xr [a]
+;;     (let [a 0 b 9]
+;;       (if (> a b)
+;;         (print "hola")
+;;         (print "chau"))))
+
+
+;; (xr [b]
+;;     (let [a 0 b 9]
+;;       (cond (> b 5) "Pepe"
+;;             (> a 3) "Juan"
+;;             :else "Otro")
+;;       ))
