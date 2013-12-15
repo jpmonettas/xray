@@ -49,13 +49,16 @@
 
 (defmethod parse-item :map
   [form ctx]
-  (into (if (sorted? form) (sorted-map) {})
-                     (map #(parse-item %1 ctx) form)))
+  {:r-form
+   (into (if (sorted? form) (sorted-map) {})
+         (map #(:r-form (parse-item %1 ctx)) form))})
 
+;; do ctx thing here like in map
 (defmethod parse-item :vector
   [form ctx]
   (vec (map #(parse-item %1 ctx) form)))
 
+;; do ctx thing here like in map
 (defmethod parse-item :set
   [form ctx]
   (into (if (sorted? form) (sorted-set) #{})
@@ -63,11 +66,12 @@
 
 (defmethod parse-item :default
   [form ctx]
-  `(do
-     (add-transformation (gen-uniq-node {})
-                         ~(:parent-node ctx)
-                         ~form)
-     ~form))
+  {:r-form
+   `(do
+      (add-transformation (gen-uniq-node {})
+                          ~(:parent-node ctx)
+                          ~form)
+      ~form)})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; S-Expressions parsing
@@ -84,20 +88,22 @@
   (let [parent-node (:parent-node ctx)
         ctx (merge-node-and-update-parent ctx {:type :map
                                                 :map-func (pprint f)})
-        debugged-col (parse-item col ctx)]
-    `(let [result# (map ~f ~debugged-col)]
-       (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
-       result#)))
+        debugged-col (:r-form (parse-item col ctx))]
+    {:r-form
+     `(let [result# (map ~f ~debugged-col)]
+        (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
+        result#)}))
 
 (defmethod parse-sexp 'reduce
   [[_ f col] ctx]
   (let [parent-node (:parent-node ctx)
         ctx (merge-node-and-update-parent ctx {:type :reduce
                                                 :reduce-func (pprint f)})
-        debugged-col (parse-item col ctx)]
-    `(let [result# (reduce ~f ~debugged-col)]
-       (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
-       result#)))
+        debugged-col (:r-form (parse-item col ctx))]
+    {:r-form
+     `(let [result# (reduce ~f ~debugged-col)]
+        (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
+        result#)}))
 
 
 
@@ -118,30 +124,30 @@
 (defmethod parse-sexp 'quote
   [form ctx]
   (let [parent-node (:parent-node ctx)]
-    `(do
-       (add-transformation (gen-uniq-node {})
-                           ~parent-node
-                           ~form)
-       ~form)))
+    {:r-form
+     `(do
+        (add-transformation (gen-uniq-node {})
+                            ~parent-node
+                            ~form)
+        ~form)}))
 
 
 (defmethod parse-sexp :default
   [form ctx]
   (let [parent-node (:parent-node ctx)
-        ctx (assoc ctx :parent-node (:this-node ctx)) ;;Now we are the parents
+        ctx (merge-node-and-update-parent ctx {})
         [f & params] form
-        debugged-form `(~f ~@(map #(parse-item % ctx) params))]
-    `(let [result# ~debugged-form]
-       (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
-       result#)))
-
-
+        debugged-form `(~f ~@(map #(:r-form ( parse-item % ctx)) params))]
+    {:r-form
+     `(let [result# ~debugged-form]
+        (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
+        result#)}))
 
 
 (defmacro xray [form]
   `(do
      (swap! graph (fn [a#] (lgr/weighted-digraph)))
-     ~(parse-item (mexpand-all form) {})))
+     ~(:r-form ( parse-item (mexpand-all form) {}))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Ideas for recursion
