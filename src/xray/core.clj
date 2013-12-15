@@ -1,4 +1,5 @@
 (ns xray.core
+  (:use clojure.tools.macro)
   (:require
    [loom.graph :as lgr]
    [loom.alg :as lalg]
@@ -17,7 +18,9 @@
   (swap! graph (fn [gr]
                  (lgr/add-edges gr
                                 [v1 v2 edge]))))
-
+;;;;;;;;;;;;;;;;
+;; Multhimethods
+;;;;;;;;;;;;;;;;
 
 (defmulti parse-item (fn [form ctx]
                        (cond
@@ -26,9 +29,23 @@
                         (vector? form) :vector
                         (set? form) :set)))
 
+(defmulti parse-sexp (fn [[sym & rest] ctx]
+                       sym))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Methods implementation
+;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defmethod parse-item :seq
   [form ctx]
-  (parse-sexp form ctx))
+  (let [f (first form)
+        parent-node (or (:parent-node ctx) (gen-uniq-node {:result-node true}))
+        this-node (gen-uniq-node (merge {:form (pprint form)}
+                                               (when (not (= f 'quote))
+                                                 {:func (pprint (first form))})))
+        ctx (assoc ctx :parent-node parent-node :this-node this-node)]
+    (parse-sexp form ctx)))
 
 (defmethod parse-item :map
   [form ctx]
@@ -46,41 +63,57 @@
 
 (defmethod parse-item :default
   [form ctx]
-  (let [parent-node (:parent-node ctx)]
-    `(do
-       (add-transformation (gen-uniq-node {})
-                           ~parent-node
-                           ~form)
-       ~form)))
+  `(do
+     (add-transformation (gen-uniq-node {})
+                         ~(:parent-node ctx)
+                         ~form)
+     ~form))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; S-Expressions parsing
 ;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defmulti parse-sexp (fn [[sym & rest] ctx]
-                       sym))
 
+(defn merge-node-and-update-parent [ctx merge-opts]
+  (let [merged (merge-with merge ctx {:this-node merge-opts})
+        swapped (assoc merged :parent-node (:this-node merged))]
+    swapped))
 
 (defmethod parse-sexp 'map
   [[_ f col] ctx]
   (let [parent-node (:parent-node ctx)
-        this-node (gen-uniq-node {:form-func "map"
-                                  :map-func (pprint f)})
-        ctx (assoc ctx :parent-node this-node)
+        ctx (merge-node-and-update-parent ctx {:type :map
+                                                :map-func (pprint f)})
         debugged-col (parse-item col ctx)]
     `(let [result# (map ~f ~debugged-col)]
-       (add-transformation ~this-node ~parent-node (pprint result#))
+       (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
        result#)))
 
-(defmethod parse-sexp 'if
-  [[_ test then else] ctx]
-  `(if ~(parse-item test ctx)
-     (do
-       (print "Then")
-       ~(parse-item then ctx))
-     (do
-       (print "Else")
-       ~(parse-item else ctx))))
+(defmethod parse-sexp 'reduce
+  [[_ f col] ctx]
+  (let [parent-node (:parent-node ctx)
+        ctx (merge-node-and-update-parent ctx {:type :reduce
+                                                :reduce-func (pprint f)})
+        debugged-col (parse-item col ctx)]
+    `(let [result# (reduce ~f ~debugged-col)]
+       (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
+       result#)))
+
+
+
+;; (defmethod parse-sexp 'if
+;;   [[_ test then else] ctx]
+;;   (let [parent-node (:parent-node ctx)
+;;         this-node (gen-uniq-node {:form-func "if"})
+;;         ctx (assoc ctx :parent-node this-node)]
+
+;;     (if ~(parse-item test ctx)
+;;      (do
+;;        (print "Then")
+;;        ~(parse-item then ctx))
+;;      (do
+;;        (print "Else")
+;;        ~(parse-item else ctx)))))
 
 (defmethod parse-sexp 'quote
   [form ctx]
@@ -94,13 +127,12 @@
 
 (defmethod parse-sexp :default
   [form ctx]
-  (let [parent-node (or (:parent-node ctx) (gen-uniq-node {:form-result ""}))
-        this-node (gen-uniq-node {:form-func (name (first form))})
-        ctx (assoc ctx :parent-node this-node)
+  (let [parent-node (:parent-node ctx)
+        ctx (assoc ctx :parent-node (:this-node ctx)) ;;Now we are the parents
         [f & params] form
         debugged-form `(~f ~@(map #(parse-item % ctx) params))]
     `(let [result# ~debugged-form]
-       (add-transformation ~this-node ~parent-node result#)
+       (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
        result#)))
 
 
@@ -109,4 +141,46 @@
 (defmacro xray [form]
   `(do
      (swap! graph (fn [a#] (lgr/weighted-digraph)))
-     ~(parse-item (macroexpand form) {})))
+     ~(parse-item (mexpand-all form) {})))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Ideas for recursion
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;; If we are NOT macroexpanding at the beginnning
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn fact [n]
+  (if (zero? n)
+    1
+    (* n (fact (dec n)))))
+
+;; should became something like this :
+
+(defn fact [n]
+  ((fn fact2 [n2 p]
+     (if (zero? n2)
+       1
+       (* n2 (fact2 (dec n2) p))))
+   n nil))
+
+;; If we are macroexpanding at the beginning
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(def fact
+  (fn*
+   ([n]
+      (if (zero? n)
+        1
+        (* n (fact (dec n)))))))
+
+;; should became something like this :
+
+(def fact
+  (fn*
+   ([n]
+      ((fn temp-fn [temp-n ctx]
+          (if (zero? temp-n)
+            1
+            (* temp-n (temp-fn (dec temp-n) ctx))))
+       n nil))))
