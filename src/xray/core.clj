@@ -37,16 +37,6 @@
 ;; Methods implementation
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; (defmethod parse-item :seq
-;;   [form ctx]
-;;   (let [f (first form)
-;;         parent-node (or (:parent-node ctx) (gen-uniq-node {:result-node true}))
-;;         this-node (gen-uniq-node (merge {:form (pprint form)}
-;;                                                (when (not (= f 'quote))
-;;                                                  {:func (pprint (first form))})))
-;;         ctx (assoc ctx :parent-node parent-node :this-node this-node)]
-;;     (parse-sexp form ctx)))
-
 (defmethod parse-item :seq
   [form ctx]
   (let [f (first form)
@@ -84,6 +74,63 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; S-Expressions parsing
 ;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+(defmethod parse-sexp 'quote
+  [form ctx]
+  {:r-form
+   `(do
+      (add-transformation (gen-uniq-node {})
+                          ~(:parent-var ctx)
+                          ~form)
+      ~form)})
+
+
+
+(defmethod parse-sexp 'def
+  [[_ name init-form] ctx]
+  (let [ctx (merge ctx {:def-name name :recur-symb (gensym)})
+        debugged-init (parse-item init-form ctx)
+        debugged-init-form (:r-form debugged-init)
+        r-form `(def ~name ~debugged-init-form)]
+    {:r-form r-form}))
+
+
+(defmethod parse-sexp 'fn*
+  [form ctx]
+  (let [[_ expr] form
+        [params & body] expr
+        debugged-body (map #(parse-item % ctx) body)
+        debugged-body-forms (map #(:r-form %) debugged-body)]
+    {:r-form
+     `(fn*
+       (~params
+        (let [parent#  ~(:parent-var ctx)]
+          (binding [~(:parent-var ctx) (gen-uniq-node ~(:this-node-info ctx))]
+            (let [result# (do ~@debugged-body-forms)]
+                      (add-transformation
+                       ~(:parent-var ctx) ;; Contains this node info
+                       parent#
+                       (pprint result#))
+                      result#)))))}))
+
+(defmethod parse-sexp :default
+  [form ctx]
+  (let [[f & params] form
+        debugged-f (if (seq? f)
+                     (:r-form (parse-item f ctx))
+                     f)
+        debugged-params (map #(parse-item % ctx) params)
+        debugged-params-forms (map #(:r-form %) debugged-params)
+        debugged-form `(~debugged-f ~@debugged-params-forms)]
+    {:r-form `(let [parent#  ~(:parent-var ctx)]
+                (binding [~(:parent-var ctx) (gen-uniq-node ~(:this-node-info ctx))]
+                  (let [result# ~debugged-form]
+                    (add-transformation
+                     ~(:parent-var ctx) ;; Contains this node info
+                     parent#
+                     (pprint result#))
+                    result#)))}))
 
 
 ;; (defn merge-node-and-update-parent [ctx merge-opts]
@@ -144,62 +191,6 @@
 ;;        (print "Else")
 ;;        ~(parse-item else ctx)))))
 
-(defmethod parse-sexp 'quote
-  [form ctx]
-  {:r-form
-   `(do
-      (add-transformation (gen-uniq-node {})
-                          ~(:parent-var ctx)
-                          ~form)
-      ~form)})
-
-
-
-(defmethod parse-sexp 'def
-  [[_ name init-form] ctx]
-  (let [ctx (merge ctx {:def-name name :recur-symb (gensym)})
-        debugged-init (parse-item init-form ctx)
-        debugged-init-form (:r-form debugged-init)
-        r-form `(def ~name ~debugged-init-form)]
-    {:r-form r-form}))
-
-
-(defmethod parse-sexp 'fn*
-  [form ctx]
-  (let [[_ expr] form
-        [params & body] expr
-        debugged-body (map #(parse-item % ctx) body)
-        debugged-body-forms (map #(:r-form %) debugged-body)]
-    {:r-form
-     `(fn*
-       (~params
-        (let [parent#  ~(:parent-var ctx)]
-          (binding [~(:parent-var ctx) (gen-uniq-node ~(:this-node-info ctx))]
-            (let [result# (do ~@debugged-body-forms)]
-                      (add-transformation
-                       ~(:parent-var ctx) ;; Contains this node info
-                       parent#
-                       (pprint result#))
-                      result#)))))}))
-
-(defmethod parse-sexp :default
-  [form ctx]
-  (let [[f & params] form
-        debugged-f (if (seq? f)
-                     (:r-form (parse-item f ctx))
-                     f)
-        debugged-params (map #(parse-item % ctx) params)
-        debugged-params-forms (map #(:r-form %) debugged-params)
-        debugged-form `(~debugged-f ~@debugged-params-forms)]
-    {:r-form `(let [parent#  ~(:parent-var ctx)]
-                (binding [~(:parent-var ctx) (gen-uniq-node ~(:this-node-info ctx))]
-                  (let [result# ~debugged-form]
-                    (add-transformation
-                     ~(:parent-var ctx) ;; Contains this node info
-                     parent#
-                     (pprint result#))
-                    result#)))}))
-
 
 
 (defmacro xray [form]
@@ -209,50 +200,14 @@
        (swap! graph (fn [a#] (lgr/weighted-digraph)))
        ~(:r-form (parse-item (mexpand-all form) ctx)))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Ideas for recursion
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;
+;; Some tests
+;;;;;;;;;;;;;
 
-
-;; If we are NOT macroexpanding at the beginnning
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (xray (defn fact [n]
         (if (zero? n)
           1
           (* n (fact (dec n))))))
-
-;; should became something like this :
-
-(defn fact [n]
-  ((fn fact2 [n2 p]
-     (if (zero? n2)
-       1
-       (* n2 (fact2 (dec n2) p))))
-   n nil))
-
-;; If we are macroexpanding at the beginning
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(fn*
-   ([n] (+ 2 n)))
-(def fact
-  (fn*
-   ([n]
-      (if (zero? n)
-        1
-        (* n (fact (dec n)))))))
-
-;; should became something like this :
-
-(def fact
-  (fn*
-   ([n]
-      ((fn temp-fn [temp-n ctx]
-          (if (zero? temp-n)
-            1
-            (* temp-n (temp-fn (dec temp-n) ctx))))
-       n nil))))
-
 
 (xray (* 10
          (->> (range 5)
