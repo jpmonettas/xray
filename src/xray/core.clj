@@ -155,80 +155,33 @@
 
 
 
-;; (def fact
-;;   (fn*
-;;    ([n]
-;;       (if (zero? n)
-;;         1
-;;         (* n (fact (dec n)))))))
-
-;; ;; should became something like this :
-
-
-;; (def fact
-;;   (fn*
-;;    ([n]
-;;       ((fn temp-fn [parent n]
-;;           (if (zero? n)
-;;             1
-;;             (* n (temp-fn parent (dec n)))))
-;;        THIS-NODE n))))
+(defmethod parse-sexp 'def
+  [[_ name init-form] ctx]
+  (let [ctx (merge ctx {:def-name name :recur-symb (gensym)})
+        debugged-init (parse-item init-form ctx)
+        debugged-init-form (:r-form debugged-init)
+        r-form `(def ~name ~debugged-init-form)]
+    {:r-form r-form}))
 
 
-;; (defmethod parse-sexp 'def
-;;   [[_ name init-form] ctx]
-;;   (let [ctx (merge ctx {:def-name name :recur-symb (gensym)})
-;;         debugged-init (parse-item init-form ctx)
-;;         debugged-init-form (:r-form debugged-init)
-;;         is-recur-fn (:recur debugged-init)
-;;         r-form (if nil ;;(= (first debugged-init-form) 'fn*)
-;;                  (let [fn-body (second debugged-init-form)
-;;                        [fn-params & body-forms] fn-body]
-;;                    `(def ~name
-;;                       (fn*
-;;                        (~fn-params
-;;                         ((fn ~(:recur-symb ctx) ~(into [(gensym)] fn-params)
-;;                            ~@body-forms)
-;;                          ~(:this-node ctx))))))
-;;                  `(def ~name ~debugged-init-form))]
-;;     {:r-form r-form
-;;      :recur is-recur-fn}))
+(defmethod parse-sexp 'fn*
+  [form ctx]
+  (let [[_ expr] form
+        [params & body] expr
+        debugged-body (map #(parse-item % ctx) body)
+        debugged-body-forms (map #(:r-form %) debugged-body)]
+    {:r-form
+     `(fn*
+       (~params
+        (let [parent#  ~(:parent-var ctx)]
+          (binding [~(:parent-var ctx) (gen-uniq-node ~(:this-node-info ctx))]
+            (let [result# (do ~@debugged-body-forms)]
+                      (add-transformation
+                       ~(:parent-var ctx) ;; Contains this node info
+                       parent#
+                       (pprint result#))
+                      result#)))))}))
 
-;; (defmethod parse-sexp 'fn*
-;;   [form ctx]
-;;   (let [[_ expr] form
-;;         [params & body] expr
-;;         debugged-body (map #(parse-item % ctx) body)
-;;         debugged-body-forms (map #(:r-form %) debugged-body)
-;;         recur (reduce #(or %1 %2) (map :recur debugged-body))]
-;;     {:r-form `(fn*
-;;                (~params
-;;                 ~@debugged-body-forms))
-;;      :recur recur}))
-
-;; (defmethod parse-sexp :default
-;;   [form ctx]
-;;   (let [parent-node (:parent-node ctx)
-;;         ctx (merge-node-and-update-parent ctx {})
-;;         [f & params] form
-;;         debugged-f (if (seq? f)
-;;                      (:r-form (parse-item f ctx))
-;;                      f)
-;;         debugged-params (map #(parse-item % ctx) params)
-;;         debugged-params-forms (map #(:r-form %) debugged-params)
-;;         recur (or (reduce #(or %1 %2) (map :recur debugged-params))
-;;                   (= (:def-name ctx) f))
-;;         effective-f (if nil ;;(= (:def-name ctx) f)
-;;                       (:recur-symb ctx)
-;;                       debugged-f)
-;;         effective-params (if nil ;; (= (:def-name ctx) f)
-;;                            (conj debugged-params-forms (:this-node ctx))
-;;                            debugged-params-forms)
-;;         debugged-form `(~effective-f ~@effective-params)]
-;;     {:recur recur
-;;      :r-form `(let [result# ~debugged-form]
-;;                 (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
-;;                 result#)}))
 (defmethod parse-sexp :default
   [form ctx]
   (let [[f & params] form
