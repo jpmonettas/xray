@@ -18,8 +18,14 @@ svg {
     fill: none;
 }
 
-.node .fn {
+.node .form{
     margin: 20px;
+}
+
+.node .fn {
     color: red;
     font-weight: bold;
+}
+
+.node .let ol{
 }

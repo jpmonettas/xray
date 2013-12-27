@@ -5,6 +5,7 @@
         ring.middleware.json
         hiccup.core
         hiccup.page
+        hiccup.element
         [clojure.tools.nrepl.server :only (start-server stop-server)])
   (:require [compojure.handler :as handler]
             [compojure.route :as route]
@@ -36,11 +37,19 @@
 
 (defmethod htmlize-node 'fn*
   [n]
-  (html [:div {:class "form fn"} (str (:form n))]))
+  (html [:div {:class "form fn"} (str (:func n))]))
+
+(defmethod htmlize-node 'let*
+  [n]
+  (html [:div {:class "form let"}
+         [:div (str (:func n))]
+         [:ul
+          (for [[k v] (:bindings n)]
+            [:li [:span k] [:span "&nbsp;->&nbsp;"] [:span v]])]]))
 
 (defmethod htmlize-node :default
   [n]
-  (or (:form n) " "))
+  (or (:func n) " "))
 
 (defn get-graph-dot-str []
   {:body

@@ -4,7 +4,8 @@
    [loom.graph :as lgr]
    [loom.attr :as lat]
    [loom.alg :as lalg]
-   [loom.io :as lio]))
+   [loom.io :as lio]
+   [clojure.contrib.string :as cstr]))
 
 (def graph (atom (lgr/digraph)))
 
@@ -117,6 +118,27 @@
                        result#)
                       result#)))))}))
 
+(defmethod parse-sexp 'let*
+  [[_ params & body] ctx]
+  (let [param-symbols (->> params
+                           (partition 2)
+                           (remove #(cstr/substring? "vec__" (name (first %))))
+                           (map first))
+        debugged-body (map #(parse-item % ctx) body)
+        debugged-body-forms (map #(:r-form %) debugged-body)]
+    {:r-form `(let* ~params
+                    (let [parent#  ~(:parent-var ctx)]
+                      (binding [~(:parent-var ctx) (gen-uniq-node ~(merge (:this-node-info ctx)
+                                                                          {:bindings (zipmap (map name param-symbols)
+                                                                                             param-symbols)}))]
+                        (let [result# (do ~@debugged-body-forms)]
+                          (add-transformation
+                           ~(:parent-var ctx) ;; Contains this node info
+                           parent#
+                           result#)
+                          result#))))}))
+
+
 (defmethod parse-sexp :default
   [form ctx]
   (let [[f & params] form
@@ -207,13 +229,27 @@
 ;; Some tests
 ;;;;;;;;;;;;;
 
-(xray (defn fact [n]
-        (if (zero? n)
-          1
-          (* n (fact (dec n))))))
+;; (xray (defn fact [n]
+;;         (if (zero? n)
+;;           1
+;;           (* n (fact (dec n))))))
 
 ;; (xray (* 10
 ;;          (->> (range 5)
 ;;                  (map inc)
 ;;                  (filter #(zero? (mod % 2)))
 ;;                  (reduce +))))
+
+(->> ['a
+     5
+     'b
+     10
+     'vec__7137
+     '(5 9)
+     'c
+     '(clojure.core/nth vec__7137 0 nil)
+     'd
+     '(clojure.core/nth vec__7137 1 nil)]
+     (partition 2)
+     (remove #(cstr/substring? "vec__" (name (first %))))
+     (map first))
