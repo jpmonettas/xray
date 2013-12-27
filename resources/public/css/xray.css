@@ -1,0 +1,25 @@
+svg {
+    overflow: hidden;
+}
+
+.node rect {
+    stroke: #333;
+    stroke-width: 1.5px;
+    fill: #ffffff;
+}
+
+.edge-label rect {
+    fill: #ffffff;
+}
+
+.edge path {
+    stroke: #333;
+    stroke-width: 1.5px;
+    fill: none;
+}
+
+.node .fn {
+    margin: 20px;
+    color: red;
+    font-weight: bold;
+}

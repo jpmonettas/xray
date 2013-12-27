@@ -2,22 +2,25 @@
   (:use clojure.tools.macro)
   (:require
    [loom.graph :as lgr]
+   [loom.attr :as lat]
    [loom.alg :as lalg]
    [loom.io :as lio]))
 
-
-(def graph (atom (lgr/weighted-digraph)))
+(def graph (atom (lgr/digraph)))
 
 (defn pprint [obj]
-  (with-out-str (clojure.pprint/pprint obj)))
+  (str (if (seq? obj) (seq obj) obj)))
 
 (defn gen-uniq-node [node-map]
   (merge node-map {:node-id (str (gensym))}))
 
 (defn add-transformation [v1 v2 edge]
   (swap! graph (fn [gr]
-                 (lgr/add-edges gr
-                                [v1 v2 edge]))))
+                 (-> gr
+                     (lgr/add-edges [v1 v2])
+                     (lat/add-attr v1 v2 :label (pprint edge))))))
+
+
 ;;;;;;;;;;;;;;;;
 ;; Multhimethods
 ;;;;;;;;;;;;;;;;
@@ -40,8 +43,8 @@
 (defmethod parse-item :seq
   [form ctx]
   (let [f (first form)
-        this-node-info {:func (pprint f)
-                        :form (pprint form)}
+        this-node-info {:func `(quote ~f)
+                        :form `(quote ~form)}
         ctx (assoc ctx :this-node-info this-node-info)]
     (parse-sexp form ctx)))
 
@@ -111,7 +114,7 @@
                       (add-transformation
                        ~(:parent-var ctx) ;; Contains this node info
                        parent#
-                       (pprint result#))
+                       result#)
                       result#)))))}))
 
 (defmethod parse-sexp :default
@@ -129,7 +132,7 @@
                     (add-transformation
                      ~(:parent-var ctx) ;; Contains this node info
                      parent#
-                     (pprint result#))
+                     result#)
                     result#)))}))
 
 
@@ -197,7 +200,7 @@
   (let [ctx (assoc {} :parent-var (gensym))]
     `(do
        (def ~(vary-meta (:parent-var ctx) assoc :dynamic true) (gen-uniq-node {:result-node true}))
-       (swap! graph (fn [a#] (lgr/weighted-digraph)))
+       (swap! graph (fn [a#] (lgr/digraph)))
        ~(:r-form (parse-item (mexpand-all form) ctx)))))
 
 ;;;;;;;;;;;;;
@@ -209,8 +212,8 @@
           1
           (* n (fact (dec n))))))
 
-(xray (* 10
-         (->> (range 5)
-                 (map inc)
-                 (filter #(zero? (mod % 2)))
-                 (reduce +))))
+;; (xray (* 10
+;;          (->> (range 5)
+;;                  (map inc)
+;;                  (filter #(zero? (mod % 2)))
+;;                  (reduce +))))
