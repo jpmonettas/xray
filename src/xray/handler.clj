@@ -10,6 +10,7 @@
   (:require [compojure.handler :as handler]
             [compojure.route :as route]
             [clojure.tools.logging :as log]
+            [loom.attr :as lat]
             [loom.io :as lio]
             [xray.core :as core]))
 
@@ -35,6 +36,13 @@
 
 (defmulti htmlize-node (fn [n] (:func n)))
 
+(defmulti htmlize-edge (fn [n1 n2] (let [lab (lat/attr @core/graph n1 n2 :label)]
+                                    (cond
+                                     (seq? lab) :seq
+                                     (map? lab) :map
+                                     (vector? lab) :vector
+                                     (set? lab) :set))))
+
 (defmethod htmlize-node 'fn*
   [n]
   (html [:div {:class "form fn"} (str (:func n))]))
@@ -42,18 +50,52 @@
 (defmethod htmlize-node 'let*
   [n]
   (html [:div {:class "form let"}
-         [:div (str (:func n))]
+         [:div {:class "special-form"} (str (:func n))]
          [:ul
           (for [[k v] (:bindings n)]
             [:li [:span k] [:span "&nbsp;->&nbsp;"] [:span v]])]]))
+
+(defmethod htmlize-node 'if
+  [n]
+  (html [:div {:class "form if"}
+         [:div {:class "special-form"} (str (:func n))]
+         [:div {:class "if-test-form"} (str (:test-form n))]
+         [:div
+          [:span {:class (str "if-test-result " (if (:test-result n)
+                                           "if-test-true"
+                                           "if-test-false"))}
+           (if (:test-result n) "true" "false")]]]))
 
 (defmethod htmlize-node :default
   [n]
   (or (:func n) " "))
 
+(defmethod htmlize-edge :map
+  [n1 n2]
+  (let [lab (lat/attr @core/graph n1 n2 :label)]
+    (html [:div {:class "edge map"}
+           [:div {:class "edge title"} "{&nbsp;}"]
+           [:ul
+            (for [[k v] lab]
+              [:li [:span k] [:span "&nbsp;->&nbsp;"] [:span v]])]])))
+
+(defmethod htmlize-edge :vector
+  [n1 n2]
+  (let [lab (lat/attr @core/graph n1 n2 :label)]
+    (html [:div {:class "edge vector"}
+           [:div {:class "edge title"} "[&nbsp;]"]
+           [:ul
+            (for [k lab]
+              [:li [:span k]])]])))
+
+(defmethod htmlize-edge :default
+  [n1 n2]
+  (let [lab (lat/attr @core/graph n1 n2 :label)]
+    lab))
+
 (defn get-graph-dot-str []
   {:body
-   {:graph (lio/dot-str @core/graph :node-label htmlize-node)}})
+   {:graph (lio/dot-str @core/graph :node-label htmlize-node :edge-label htmlize-edge)}})
 
 (defroutes app-routes
   (GET "/" [] (main-page))

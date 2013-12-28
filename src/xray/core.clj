@@ -9,8 +9,8 @@
 
 (def graph (atom (lgr/digraph)))
 
-(defn pprint [obj]
-  (str (if (seq? obj) (seq obj) obj)))
+(defn expand-obj [obj]
+  (if (seq? obj) (seq obj) obj))
 
 (defn gen-uniq-node [node-map]
   (merge node-map {:node-id (str (gensym))}))
@@ -19,7 +19,7 @@
   (swap! graph (fn [gr]
                  (-> gr
                      (lgr/add-edges [v1 v2])
-                     (lat/add-attr v1 v2 :label (pprint edge))))))
+                     (lat/add-attr v1 v2 :label (expand-obj edge))))))
 
 
 ;;;;;;;;;;;;;;;;
@@ -49,22 +49,21 @@
         ctx (assoc ctx :this-node-info this-node-info)]
     (parse-sexp form ctx)))
 
-(defmethod parse-item :map
-  [form ctx]
-  {:r-form
-   (into (if (sorted? form) (sorted-map) {})
-         (map #(:r-form (parse-item %1 ctx)) form))})
+;; (defmethod parse-item :map
+;;   [form ctx]
+;;   {:r-form
+;;    (into (if (sorted? form) (sorted-map) {})
+;;          (map #(:r-form (parse-item % ctx)) form))})
 
-;; do ctx thing here like in map
-(defmethod parse-item :vector
-  [form ctx]
-  (vec (map #(parse-item %1 ctx) form)))
+;; (defmethod parse-item :vector
+;;   [form ctx]
+;;   {:r-form
+;;    (vec (map #(:r-form (parse-item % ctx)) form))})
 
-;; do ctx thing here like in map
-(defmethod parse-item :set
-  [form ctx]
-  (into (if (sorted? form) (sorted-set) #{})
-                     (map #(parse-item %1 ctx) form)))
+;; (defmethod parse-item :set
+;;   [form ctx]
+;;   {:r-form (into (if (sorted? form) (sorted-set) #{})
+;;                  (map #(:r-from (parse-item % ctx)) form))})
 
 (defmethod parse-item :default
   [form ctx]
@@ -138,6 +137,22 @@
                            result#)
                           result#))))}))
 
+(defmethod parse-sexp 'if
+  [[_ test then else] ctx]
+  (let [debugged-then-form (:r-form (parse-item then ctx))
+        debugged-else-form (:r-form (parse-item else ctx))]
+    {:r-form `(let [parent#  ~(:parent-var ctx)
+                    test# ~test]
+                (binding [~(:parent-var ctx) (gen-uniq-node (merge ~(:this-node-info ctx)
+                                                                   {:test-result test#
+                                                                    :test-form (quote ~test)}))]
+                  (let [ result# (if test# ~debugged-then-form ~debugged-else-form)]
+                    (add-transformation
+                     ~(:parent-var ctx) ;; Contains this node info
+                     parent#
+                     result#)
+                    result#)))}))
+
 
 (defmethod parse-sexp :default
   [form ctx]
@@ -158,98 +173,31 @@
                     result#)))}))
 
 
-;; (defn merge-node-and-update-parent [ctx merge-opts]
-;;   (let [merged (merge-with merge ctx {:this-node merge-opts})
-;;         swapped (assoc merged :parent-node (:this-node merged))]
-;;     swapped))
-
-;; (defmethod parse-sexp 'map
-;;   [[_ f col] ctx]
-;;   (let [parent-node (:parent-node ctx)
-;;         ctx (merge-node-and-update-parent ctx {:type :map
-;;                                                 :map-func (pprint f)})
-;;         debugged-col (:r-form (parse-item col ctx))]
-;;     {:r-form
-;;      `(let [result# (map ~f ~debugged-col)]
-;;         (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
-;;         result#)}))
-
-;; (defmethod parse-sexp 'reduce
-;;   [[_ f col] ctx]
-;;   (let [parent-node (:parent-node ctx)
-;;         ctx (merge-node-and-update-parent ctx {:type :reduce
-;;                                                 :reduce-func (pprint f)})
-;;         debugged-col (parse-item col ctx)
-;;         debugged-col-form (:r-form debugged-col)]
-;;     {:r-form
-;;      `(let [result# (reduce ~f ~debugged-col-form)]
-;;         (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
-;;         result#)
-;;      :recur (:recur debugged-col)}))
-
-;; (defmethod parse-sexp 'filter
-;;   [[_ f col] ctx]
-;;   (let [parent-node (:parent-node ctx)
-;;         ctx (merge-node-and-update-parent ctx {:type :filter
-;;                                                 :filter-func (pprint f)})
-;;         debugged-col (parse-item col ctx)
-;;         debugged-col-form (:r-form debugged-col)]
-;;     {:r-form
-;;      `(let [result# (filter ~f ~debugged-col-form)]
-;;         (add-transformation ~(:this-node ctx) ~parent-node (pprint result#))
-;;         result#)
-;;      :recur (:recur debugged-col)}))
 
 
 
-;; (defmethod parse-sexp 'if
-;;   [[_ test then else] ctx]
-;;   (let [parent-node (:parent-node ctx)
-;;         this-node (gen-uniq-node {:form-func "if"})
-;;         ctx (assoc ctx :parent-node this-node)]
-
-;;     (if ~(parse-item test ctx)
-;;      (do
-;;        (print "Then")
-;;        ~(parse-item then ctx))
-;;      (do
-;;        (print "Else")
-;;        ~(parse-item else ctx)))))
-
-
-
-(defmacro xray [form]
+(defmacro xray [& forms]
   (let [ctx (assoc {} :parent-var (gensym))]
     `(do
        (def ~(vary-meta (:parent-var ctx) assoc :dynamic true) (gen-uniq-node {:result-node true}))
        (swap! graph (fn [a#] (lgr/digraph)))
-       ~(:r-form (parse-item (mexpand-all form) ctx)))))
+       ~@(map
+         #(:r-form ( parse-item (mexpand-all %) ctx))
+         forms))))
 
 ;;;;;;;;;;;;;
 ;; Some tests
 ;;;;;;;;;;;;;
 
-;; (xray (defn fact [n]
-;;         (if (zero? n)
-;;           1
-;;           (* n (fact (dec n))))))
+(xray
 
-;; (xray (* 10
-;;          (->> (range 5)
-;;                  (map inc)
-;;                  (filter #(zero? (mod % 2)))
-;;                  (reduce +))))
+ (defn fact [n]
+   (if (zero? n)
+     1
+     (* n (fact (dec n)))))
 
-(->> ['a
-     5
-     'b
-     10
-     'vec__7137
-     '(5 9)
-     'c
-     '(clojure.core/nth vec__7137 0 nil)
-     'd
-     '(clojure.core/nth vec__7137 1 nil)]
-     (partition 2)
-     (remove #(cstr/substring? "vec__" (name (first %))))
-     (map first))
+
+ (fact (->> (range 5)
+            (map inc)
+            (filter #(zero? (mod % 2)))
+            (reduce +))))

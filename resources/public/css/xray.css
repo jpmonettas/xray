@@ -23,9 +23,34 @@ svg {
 }
 
 .node .fn {
-    color: red;
+    color: blue;
     font-weight: bold;
 }
 
-.node .let ol{
+.node .let ul{
+}
+
+.node .special-form{
+    font-weight: bold;
+}
+
+.node .if .if-test-result{
+    font-weight:bold;
+}
+
+.node .if .if-test-true{
+    color:green;
+}
+
+.node .if .if-test-false{
+    color:red;
+}
+
+.edge .title{
+    font-weight:bold;
+}
+
+.edge {
+    border: 1px solid #acacac;
+    color: #acacac;
 }
