@@ -88,6 +88,15 @@
             (for [k lab]
               [:li [:span k]])]])))
 
+(defmethod htmlize-edge :seq
+  [n1 n2]
+  (let [lab (lat/attr @core/graph n1 n2 :label)]
+    (html [:div {:class "edge seq"}
+           [:div {:class "edge title"} "(&nbsp;)"]
+           [:ul
+            (for [k lab]
+              [:li [:span k]])]])))
+
 (defmethod htmlize-edge :default
   [n1 n2]
   (let [lab (lat/attr @core/graph n1 n2 :label)]

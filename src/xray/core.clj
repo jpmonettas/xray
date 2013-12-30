@@ -189,15 +189,31 @@
 ;; Some tests
 ;;;;;;;;;;;;;
 
-(xray
+;; (xray
+;;  (defn fact [n]
+;;    (if (zero? n)
+;;      1
+;;      (* n (fact (dec n)))))
 
- (defn fact [n]
-   (if (zero? n)
-     1
-     (* n (fact (dec n)))))
+
+;;  (fact
+;;   (-
+;;    (->> (range 5)
+;;         (map inc)
+;;         (reduce +))
+;;    12)))
 
 
- (fact (->> (range 5)
-            (map inc)
-            (filter #(zero? (mod % 2)))
-            (reduce +))))
+
+;; (count
+;;  (zipmap
+;;   [:name :age :weight]
+;;   ["Peter" 30 85]))
+
+
+;; (defn foo [a]
+;;   (if (zero? a)
+;;     1
+;;     (let [j a
+;;           [h k] '(6 7)]
+;;       (+ a j h k (foo (dec a))))))
