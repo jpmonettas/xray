@@ -108,14 +108,16 @@
     {:r-form
      `(fn*
        (~params
-        (let [parent#  ~(:parent-var ctx)]
-          (binding [~(:parent-var ctx) (gen-uniq-node ~(:this-node-info ctx))]
+        (let [parent-node#  ~(:parent-var ctx)
+              this-node# (gen-uniq-node ~(:this-node-info ctx))]
+          (binding [~(:parent-var ctx) this-node#]
             (let [result# (do ~@debugged-body-forms)]
                       (add-transformation
-                       ~(:parent-var ctx) ;; Contains this node info
-                       parent#
+                       this-node#
+                       parent-node#
                        result#)
                       result#)))))}))
+
 
 (defmethod parse-sexp 'let*
   [[_ params & body] ctx]
@@ -126,30 +128,34 @@
         debugged-body (map #(parse-item % ctx) body)
         debugged-body-forms (map #(:r-form %) debugged-body)]
     {:r-form `(let* ~params
-                    (let [parent#  ~(:parent-var ctx)]
-                      (binding [~(:parent-var ctx) (gen-uniq-node ~(merge (:this-node-info ctx)
+                    (let [parent-node#  ~(:parent-var ctx)
+                          this-node# (gen-uniq-node ~(merge (:this-node-info ctx)
                                                                           {:bindings (zipmap (map name param-symbols)
                                                                                              param-symbols)}))]
+                      (binding [~(:parent-var ctx) this-node#]
                         (let [result# (do ~@debugged-body-forms)]
                           (add-transformation
-                           ~(:parent-var ctx) ;; Contains this node info
-                           parent#
+                           this-node#
+                           parent-node#
                            result#)
                           result#))))}))
+
+
 
 (defmethod parse-sexp 'if
   [[_ test then else] ctx]
   (let [debugged-then-form (:r-form (parse-item then ctx))
         debugged-else-form (:r-form (parse-item else ctx))]
-    {:r-form `(let [parent#  ~(:parent-var ctx)
-                    test# ~test]
-                (binding [~(:parent-var ctx) (gen-uniq-node (merge ~(:this-node-info ctx)
+    {:r-form `(let [parent-node#  ~(:parent-var ctx)
+                    test# ~test
+                    this-node# (gen-uniq-node (merge ~(:this-node-info ctx)
                                                                    {:test-result test#
                                                                     :test-form (quote ~test)}))]
+                (binding [~(:parent-var ctx) this-node#]
                   (let [ result# (if test# ~debugged-then-form ~debugged-else-form)]
                     (add-transformation
-                     ~(:parent-var ctx) ;; Contains this node info
-                     parent#
+                     this-node#
+                     parent-node#
                      result#)
                     result#)))}))
 
@@ -163,12 +169,13 @@
         debugged-params (map #(parse-item % ctx) params)
         debugged-params-forms (map #(:r-form %) debugged-params)
         debugged-form `(~debugged-f ~@debugged-params-forms)]
-    {:r-form `(let [parent#  ~(:parent-var ctx)]
-                (binding [~(:parent-var ctx) (gen-uniq-node ~(:this-node-info ctx))]
+    {:r-form `(let [parent-node#  ~(:parent-var ctx)
+                    this-node# (gen-uniq-node ~(:this-node-info ctx))]
+                (binding [~(:parent-var ctx) this-node#]
                   (let [result# ~debugged-form]
                     (add-transformation
-                     ~(:parent-var ctx) ;; Contains this node info
-                     parent#
+                     this-node#
+                     parent-node#
                      result#)
                     result#)))}))
 
@@ -189,19 +196,20 @@
 ;; Some tests
 ;;;;;;;;;;;;;
 
-;; (xray
-;;  (defn fact [n]
-;;    (if (zero? n)
-;;      1
-;;      (* n (fact (dec n)))))
+
+(xray
+ (defn fact [n]
+   (if (zero? n)
+     1
+     (* n (fact (dec n)))))
 
 
-;;  (fact
-;;   (-
-;;    (->> (range 5)
-;;         (map inc)
-;;         (reduce +))
-;;    12)))
+ (fact
+  (-
+   (->> (range 5)
+        (map inc)
+        (reduce +))
+   12)))
 
 
 
@@ -217,3 +225,21 @@
 ;;     (let [j a
 ;;           [h k] '(6 7)]
 ;;       (+ a j h k (foo (dec a))))))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(defn factorial [n]
+  (if (zero? n)
+    1
+    (* n (factorial (dec n)))))
